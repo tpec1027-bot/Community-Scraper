@@ -3,33 +3,62 @@ import pandas as pd
 import sys
 import os
 import re
-import io
 
-# ============================================================
-# 全域 OCR Reader（延遲載入，避免多執行緒重複初始化）
-# ============================================================
-READER = None
+# Tesseract OCR 路徑
+TESSERACT_CMD = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
-def get_ocr_reader():
-    """取得共用的 EasyOCR Reader 實例（僅在首次呼叫時初始化）"""
-    global READER
-    if READER is None:
-        import easyocr
-        import logging
-        logging.getLogger().setLevel(logging.ERROR)
-        READER = easyocr.Reader(['ch_tra'], verbose=False)
-    return READER
+# OCR 形近字校正字典（Tesseract 繁體中文常見誤判）
+OCR_FIXES = {
+    "耋": "臺", "喜": "臺", "鬆": "縣", "邾": "鄉", "廓": "廟",
+    "彗": "巷", "芸": "巷", "茹": "巷",
+    "濃": "鄰", "潤": "鄰", "薪": "鄰",
+    "頌": "頂", "淼": "淡", "鄴": "鄉",
+    "簡二路": "遠路", "芝": "坑", "坎": "坑",
+    "模": "樓", "理": "重", "秋": "秀",
+}
+
+# Tesseract 常產生的尾部垃圾字元
+OCR_TRASH = ["LLˍ", "LL_", "LL", "Lˍ"]
+
+def ocr_image(img_cv):
+    """
+    使用 Tesseract OCR 辨識圖片中的繁體中文文字。
+    圖片會先放大 3 倍 + 銳化以提高辨識準確度。
+    """
+    import cv2
+    import numpy as np
+    import pytesseract
+    
+    pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
+    
+    # === 圖片預處理：放大 3 倍 + 銳化 ===
+    h, w = img_cv.shape[:2]
+    img_upscaled = cv2.resize(img_cv, (w * 3, h * 3), interpolation=cv2.INTER_CUBIC)
+    
+    # 銳化核心
+    sharpen_kernel = np.array([[-1, -1, -1],
+                               [-1,  9, -1],
+                               [-1, -1, -1]])
+    img_sharp = cv2.filter2D(img_upscaled, -1, sharpen_kernel)
+    
+    # 轉灰階 + 二值化，進一步提升辨識率
+    img_gray = cv2.cvtColor(img_sharp, cv2.COLOR_BGR2GRAY)
+    _, img_bin = cv2.threshold(img_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    
+    # === Tesseract OCR 辨識 ===
+    text = pytesseract.image_to_string(img_bin, lang='chi_tra', config='--psm 7')
+    return text.strip()
 
 def process_pdf(pdf_path, address_dropdown, owner_name, community_name="output"):
     """
     處理單一 PDF：
     1. PyMuPDF 純文字優先：尋找「建物所有權部」頁面，用 Regex 提取「地址」欄位。
-    2. EasyOCR 備援：若地址為空（被系統轉為內嵌圖片），自動提取該頁圖片進行 OCR。
+    2. Tesseract OCR 備援：若地址為空（被系統轉為內嵌圖片），提取圖片 → 放大3倍+銳化 → OCR。
     """
     try:
         doc = fitz.open(pdf_path)
         
-        # === 第一步：定位「建物所有權部」所在頁面（通常是第二頁）===
+        # === 第一步：定位「建物所有權部」所在頁面 ===
         target_page = None
         for page in doc:
             page_text = page.get_text("text")
@@ -42,48 +71,43 @@ def process_pdf(pdf_path, address_dropdown, owner_name, community_name="output")
         text = target_page.get_text("text")
         clean_text = re.sub(r'\s+', '', text)
         
-        # === 第二步：Regex 嘗試從純文字中提取地址 ===
-        # 限定在「所有權人...地址...權利範圍」區塊，避免抓到他項權利部的銀行地址
+        # === 第二步：Regex 提取純文字地址 ===
         match = re.search(r'所有權人.*?地址(.*?)權利範圍', clean_text)
         extracted_address = ""
         
         if match:
             extracted_address = match.group(1).strip()
             
-        # === 第三步：如果純文字為空 → 啟動 EasyOCR 辨識內嵌圖片 ===
+        # === 第三步：純文字為空 → Tesseract OCR 備援 ===
         if not extracted_address:
             try:
                 import numpy as np
                 import cv2
                 
-                reader = get_ocr_reader()
                 ocr_results = []
-                
                 for img_info in target_page.get_images(full=True):
                     xref = img_info[0]
                     pix = fitz.Pixmap(doc, xref)
                     
-                    # 轉為 OpenCV 可讀的格式
                     img_bytes = pix.tobytes("png")
                     img_array = np.frombuffer(img_bytes, dtype=np.uint8)
                     img_cv = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
                     
                     if img_cv is not None:
-                        res = reader.readtext(img_cv, detail=0)
-                        ocr_results.extend(res)
+                        result = ocr_image(img_cv)
+                        if result:
+                            ocr_results.append(result)
                 
                 ocr_text = "".join(ocr_results)
                 ocr_clean = re.sub(r'\s+', '', ocr_text)
                 
                 if ocr_clean:
-                    # OCR 形近字校正字典
-                    OCR_FIXES = {
-                        "耋": "臺", "鬆": "縣", "邾": "鄉", "廓": "廟",
-                        "彗": "巷", "芸": "巷", "鄰": "鄰",
-                        "號三": "號", "號五": "號",
-                    }
+                    # 套用形近字校正
                     for wrong, right in OCR_FIXES.items():
                         ocr_clean = ocr_clean.replace(wrong, right)
+                    # 清除尾部垃圾字元
+                    for trash in OCR_TRASH:
+                        ocr_clean = ocr_clean.replace(trash, "")
                     extracted_address = ocr_clean
                 else:
                     extracted_address = "[OCR 無法辨識]"
