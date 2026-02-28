@@ -5,6 +5,7 @@ import ssl
 import sys
 import json
 from concurrent.futures import ThreadPoolExecutor
+from process_pdf import process_pdf, get_ocr_reader
 
 ssl._create_default_https_context = ssl._create_unverified_context
 
@@ -53,8 +54,8 @@ def main():
                 out_file.write(response.read())
                 
             print(f"Downloaded, processing text for {addr}...")
-            # 傳遞 community_name 給 process_pdf.py 以便寫入 {community_name}.csv
-            subprocess.run([sys.executable, "process_pdf.py", pdf_path, addr, owner, community_name])
+            # 傳遞 community_name 給 process_pdf 進行處理
+            process_pdf(pdf_path, addr, owner, community_name)
         except Exception as e:
             print(f"Failed to process {addr}: {e}")
 
@@ -63,6 +64,11 @@ def main():
     csv_file = f"{community_name}.csv"
     if not os.path.exists(csv_file):
         pd.DataFrame(columns=["下拉選單地址", "所有權人姓名", "擷取到的地址文字"]).to_csv(csv_file, index=False, encoding='utf-8-sig')
+
+    # 預先載入 OCR 模型，避免多執行緒競爭下載
+    print("正在初始化 OCR 模型 (首次使用需下載，請稍候)...")
+    get_ocr_reader()
+    print("OCR 模型就緒！")
 
     # 使用多執行緒同時下載與處理
     print(f"開始多線程處理社區: {community_name}，共 {len(pdf_data)} 筆。")
