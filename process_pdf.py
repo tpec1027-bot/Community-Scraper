@@ -76,6 +76,14 @@ def process_pdf(pdf_path, address_dropdown, owner_name, community_name="output")
                 ocr_clean = re.sub(r'\s+', '', ocr_text)
                 
                 if ocr_clean:
+                    # OCR 形近字校正字典
+                    OCR_FIXES = {
+                        "耋": "臺", "鬆": "縣", "邾": "鄉", "廓": "廟",
+                        "彗": "巷", "芸": "巷", "鄰": "鄰",
+                        "號三": "號", "號五": "號",
+                    }
+                    for wrong, right in OCR_FIXES.items():
+                        ocr_clean = ocr_clean.replace(wrong, right)
                     extracted_address = ocr_clean
                 else:
                     extracted_address = "[OCR 無法辨識]"
