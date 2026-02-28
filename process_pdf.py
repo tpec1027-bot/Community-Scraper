@@ -1,6 +1,4 @@
 import fitz  # PyMuPDF
-import pytesseract
-from PIL import Image
 import pandas as pd
 import sys
 import os
@@ -17,35 +15,33 @@ def process_pdf(pdf_path, address_dropdown, owner_name, community_name="output")
     try:
         # 開啟 PDF
         doc = fitz.open(pdf_path)
-        if len(doc) < 2:
-            print(f"Error: {pdf_path} 頁數不足兩頁。")
-            return
-            
-        # 取得第二頁 (index=1)
-        page = doc[1]
-        
-        # 定義裁切區域 (x0, y0, x1, y1) - 這些座標需視實際 PDF 版面調整
-        # 由於尚未有實際 PDF 測試，先假設一個抓取上半部偏左或特定表格位置的區域
-        # 調整時，可以使用 page.rect 確認整體寬高
-        rect = fitz.Rect(100, 200, 500, 400) # 假設區塊
-        
-        # 改用 PyMuPDF 的文字提取功能 (因為 PDF 是系統產生的，通常包含可選取的文字內容)
-        text = page.get_text("text", clip=rect)
+        # 取得所有頁面的文字
+        all_text = []
+        for page in doc:
+            all_text.append(page.get_text("text"))
+        text = "".join(all_text)
         
         # 清除所有空白與換行以方便正則比對
         clean_text = re.sub(r'\s+', '', text)
         
         # 尋找 "地址" 和 "權利範圍" 之間的字串
+        # 如果 PDF 隱藏了地址，權利範圍就會緊連著地址
         match = re.search(r'地址(.*?)權利範圍', clean_text)
         if match:
             extracted_address = match.group(1)
+            # 有些文件隱私保護會整塊留空
+            if extracted_address == "":
+                extracted_address = "[地址未公開]"
         else:
-            # 若無匹配或內容為空
-            extracted_address = clean_text if clean_text else "[無文字或需使用OCR提取]"
+            # 嘗試其它可能出現的格式，或是直接標記無提取
+            match_alt = re.search(r'門牌(.*?)建物坐落', clean_text)
+            if match_alt:
+                 extracted_address = f"[門牌]{match_alt.group(1)}"
+            else:
+                 extracted_address = "[無法自動提取地址]"
         
-        # 寫入 CSV
+        # 寫入 CSV (不寫入 Header，因為由 download_and_ocr統一初始化過)
         csv_file = f"{community_name}.csv"
-        file_exists = os.path.isfile(csv_file)
         
         new_row = pd.DataFrame([{
             "下拉選單地址": address_dropdown,
@@ -54,7 +50,7 @@ def process_pdf(pdf_path, address_dropdown, owner_name, community_name="output")
         }])
         
         # a=append mode
-        new_row.to_csv(csv_file, mode='a', index=False, header=not file_exists, encoding='utf-8-sig')
+        new_row.to_csv(csv_file, mode='a', index=False, header=False, encoding='utf-8-sig')
         print(f"Success: {pdf_path} 處理完成 -> {extracted_address}")
         
     except Exception as e:

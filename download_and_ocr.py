@@ -58,6 +58,12 @@ def main():
         except Exception as e:
             print(f"Failed to process {addr}: {e}")
 
+    import pandas as pd
+    # 預先初始化 CSV 表頭避免多執行緒寫入時的競態條件 (Race Condition)
+    csv_file = f"{community_name}.csv"
+    if not os.path.exists(csv_file):
+        pd.DataFrame(columns=["下拉選單地址", "所有權人姓名", "擷取到的地址文字"]).to_csv(csv_file, index=False, encoding='utf-8-sig')
+
     # 使用多執行緒同時下載與處理
     print(f"開始多線程處理社區: {community_name}，共 {len(pdf_data)} 筆。")
     with ThreadPoolExecutor(max_workers=5) as executor:
