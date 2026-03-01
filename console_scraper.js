@@ -6,19 +6,25 @@
 (async function fetchAllPdfs() {
     console.log("🚀 [光速爬蟲] 開始執行：全社區 PDF 網址極速擷取...");
 
-    // 檢查是否在二維透視
-    const activeTab = document.querySelector('.tab-pane.active');
-    if (!activeTab || !activeTab.id.includes('CommunityCase')) {
-        alert("⚠️ 錯誤：請先切換到『二維透視』分頁再執行！");
-        return;
-    }
-
     const results = [];
 
-    // 取得下拉選單
-    const addrSelect = document.querySelector('select[name="selectAddrid"]') || document.querySelector('select#selectAddrid');
+    // 取得下拉選單 (尋找頁面上選項包含路/街/段的 select，或是直接抓第二個 select)
+    const selects = Array.from(document.querySelectorAll('select'));
+    let addrSelect = null;
+    for (let s of selects) {
+        if (s.options.length > 0 && Array.from(s.options).some(o => o.innerText.includes("段") || o.innerText.includes("路") || o.innerText.includes("街") || o.innerText.includes("巷"))) {
+            addrSelect = s;
+            break;
+        }
+    }
+    // 如果還是找不到，硬抓畫面上的第二個下拉選單 (通常第一個是未歸類，第二個是地址)
+    if (!addrSelect && selects.length >= 2) {
+        addrSelect = selects[1];
+    }
+
     if (!addrSelect) {
-        console.error("❌ 找不到地址下拉選單");
+        console.error("❌ 找不到地址下拉選單，請確認目前顯示的是二維透視的畫面！");
+        alert("找不到地址下拉選單，請確認已切換到二維透視！\n" + document.body.innerText.substring(0, 100)); // debug 提示
         return;
     }
 
