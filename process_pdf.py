@@ -78,6 +78,11 @@ def process_pdf(pdf_path, address_dropdown, owner_name, community_name="output")
         if match:
             extracted_address = match.group(1).strip()
             
+        id_match = re.search(r'統一編號([A-Za-z0-9\*＊]+)', clean_text)
+        extracted_id = ""
+        if id_match:
+            extracted_id = id_match.group(1).strip()
+            
         # === 第三步：純文字為空 → Tesseract OCR 備援 ===
         if not extracted_address:
             try:
@@ -109,6 +114,11 @@ def process_pdf(pdf_path, address_dropdown, owner_name, community_name="output")
                     for trash in OCR_TRASH:
                         ocr_clean = ocr_clean.replace(trash, "")
                     extracted_address = ocr_clean
+                    
+                    if not extracted_id:
+                        ocr_id_match = re.search(r'統一編號([A-Za-z0-9\*＊]+)', ocr_clean)
+                        if ocr_id_match:
+                            extracted_id = ocr_id_match.group(1).strip()
                 else:
                     extracted_address = "[OCR 無法辨識]"
                     
@@ -118,11 +128,25 @@ def process_pdf(pdf_path, address_dropdown, owner_name, community_name="output")
         
         doc.close()
         
+        # 決定稱謂
+        gender_title = ""
+        if extracted_id:
+            gender_match = re.search(r'[A-Za-z]([12])', extracted_id)
+            if gender_match:
+                digit = gender_match.group(1)
+                surname = owner_name[0] if owner_name else ""
+                if digit == '1':
+                    gender_title = f"{surname}先生"
+                elif digit == '2':
+                    gender_title = f"{surname}小姐"
+        
         # === 第四步：寫入 CSV ===
         csv_file = f"{community_name}.csv"
         new_row = pd.DataFrame([{
             "下拉選單地址": address_dropdown,
             "所有權人姓名": owner_name,
+            "所有權人稱謂": gender_title,
+            "統一編號": extracted_id,
             "擷取到的地址文字": extracted_address
         }])
         new_row.to_csv(csv_file, mode='a', index=False, header=False, encoding='utf-8-sig')
