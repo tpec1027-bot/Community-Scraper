@@ -71,10 +71,9 @@ def process_pdf(pdf_path, address_dropdown, owner_name, community_name="output")
         text = target_page.get_text("text")
         clean_text = re.sub(r'\s+', '', text)
         
-        # === 第二步：Regex 提取純文字地址 ===
+        # === 第二步：Regex 提取純文字地址與其他資訊 ===
         match = re.search(r'所有權人.*?地址(.*?)權利範圍', clean_text)
         extracted_address = ""
-        
         if match:
             extracted_address = match.group(1).strip()
             
@@ -82,6 +81,11 @@ def process_pdf(pdf_path, address_dropdown, owner_name, community_name="output")
         extracted_id = ""
         if id_match:
             extracted_id = id_match.group(1).strip()
+            
+        owner_match = re.search(r'所有權人(.*?)統一編號', clean_text)
+        pdf_owner = ""
+        if owner_match:
+            pdf_owner = owner_match.group(1).strip()
             
         # === 第三步：純文字為空 → Tesseract OCR 備援 ===
         if not extracted_address:
@@ -119,6 +123,11 @@ def process_pdf(pdf_path, address_dropdown, owner_name, community_name="output")
                         ocr_id_match = re.search(r'統一編號([A-Za-z0-9\*＊]+)', ocr_clean)
                         if ocr_id_match:
                             extracted_id = ocr_id_match.group(1).strip()
+                            
+                    if not pdf_owner:
+                        ocr_owner_match = re.search(r'所有權人(.*?)統一編號', ocr_clean)
+                        if ocr_owner_match:
+                            pdf_owner = ocr_owner_match.group(1).strip()
                 else:
                     extracted_address = "[OCR 無法辨識]"
                     
@@ -128,13 +137,26 @@ def process_pdf(pdf_path, address_dropdown, owner_name, community_name="output")
         
         doc.close()
         
+        # 決定最終正確的所有權人姓名
+        final_owner_name = owner_name
+        if pdf_owner:
+            pdf_clean = pdf_owner.replace('*', 'Ｏ').replace('＊', 'Ｏ').replace(' ', '')
+            # 檢查原本 JSON 是否有夾帶日期
+            date_match = re.search(r'(\(\d{4}/\d{2}/\d{2}\))', owner_name)
+            if date_match and len(pdf_clean) >= 1:
+                # 補上ＯＯ，或是保留如 張ＯＯ (2024/01/01)
+                surname = pdf_clean[0]
+                final_owner_name = f"{surname}ＯＯ {date_match.group(1)}"
+            else:
+                final_owner_name = pdf_clean
+
         # 決定稱謂
         gender_title = ""
         if extracted_id:
             gender_match = re.search(r'[A-Za-z]([12])', extracted_id)
             if gender_match:
                 digit = gender_match.group(1)
-                surname = owner_name[0] if owner_name else ""
+                surname = final_owner_name[0] if final_owner_name else ""
                 if digit == '1':
                     gender_title = f"{surname}先生"
                 elif digit == '2':
@@ -144,7 +166,7 @@ def process_pdf(pdf_path, address_dropdown, owner_name, community_name="output")
         csv_file = f"{community_name}.csv"
         new_row = pd.DataFrame([{
             "下拉選單地址": address_dropdown,
-            "所有權人姓名": owner_name,
+            "所有權人姓名": final_owner_name,
             "所有權人稱謂": gender_title,
             "統一編號": extracted_id,
             "擷取到的地址文字": extracted_address
